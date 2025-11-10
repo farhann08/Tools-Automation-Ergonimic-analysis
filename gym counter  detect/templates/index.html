@@ -1,0 +1,314 @@
+
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Push-up Counter</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <!-- Tambahkan favicon untuk menghilangkan ikon "M" -->
+    <link rel="icon" type="image/x-icon" href="{{ url_for('static', filename='favicon.ico') }}">
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+            text-align: center;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 0 15px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            border-bottom: 2px solid #4CAF50;
+            padding-bottom: 10px;
+        }
+        .video-container {
+            margin: 20px 0;
+            overflow: hidden;
+            border-radius: 8px;
+            border: 2px solid #ddd;
+            height: 480px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background-color: #f0f0f0;
+            position: relative;
+        }
+        .placeholder-text {
+            color: #666;
+            font-size: 20px;
+            position: absolute;
+            z-index: 1;
+        }
+        #videoFeed {
+            width: 100%;
+            max-width: 640px;
+            height: auto;
+            display: none;
+            z-index: 2;
+        }
+        .controls {
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            margin-top: 20px;
+            flex-wrap: wrap;
+        }
+        .controls button {
+            padding: 10px 20px;
+            background: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: all 0.3s;
+        }
+        .controls button:hover {
+            background: #45a049;
+            transform: translateY(-2px);
+        }
+        .controls button:active {
+            transform: translateY(1px);
+        }
+        .status {
+            margin-top: 20px;
+            padding: 10px;
+            background: #e9f5e9;
+            border-radius: 5px;
+            text-align: center;
+            font-size: 18px;
+        }
+        .status span {
+            font-weight: bold;
+        }
+        .current-source {
+            font-size: 14px;
+            color: #666;
+            margin-top: 5px;
+        }
+        .loader {
+            border: 5px solid #f3f3f3;
+            border-radius: 50%;
+            border-top: 5px solid #3498db;
+            width: 40px;
+            height: 40px;
+            animation: spin 2s linear infinite;
+            position: absolute;
+            display: none;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>AI Gym Detection & Counter</h1>
+        
+        <div class="video-container">
+            <div class="placeholder-text">Select a video source below to start</div>
+            <div class="loader" id="loader"></div>
+            <img id="videoFeed" alt="Video Feed">
+        </div>
+        
+        <div class="status">
+            Push-ups: <span id="counter">0</span> | 
+            Stage: <span id="stage">NONE</span>
+            <div class="current-source">
+                Source: <span id="source">None</span>
+            </div>
+        </div>
+        
+        <div class="controls">
+            <button id="resetBtn">Reset Counter</button>
+            <button id="switchToVideo">Start Video</button>
+            <button id="switchToWebcam">Start Webcam</button>
+            <button id="stopBtn" style="background-color: #f44336; display: none;">Stop</button>
+        </div>
+    </div>
+
+    <script>
+        const videoFeed = document.getElementById('videoFeed');
+        const placeholder = document.querySelector('.placeholder-text');
+        const stopBtn = document.getElementById('stopBtn');
+        const loader = document.getElementById('loader');
+        let isStreaming = false;
+
+        // Function to update status display
+        function updateStatus() {
+            fetch('/get_status')
+                .then(response => response.json())
+                .then(data => {
+                    document.getElementById('counter').textContent = data.counter;
+                    document.getElementById('stage').textContent = data.stage || 'NONE';
+                    
+                    // Update source text
+                    let sourceText = 'None';
+                    if (data.source === 'webcam') sourceText = 'Webcam';
+                    else if (data.source === 'video') sourceText = 'Video';
+                    document.getElementById('source').textContent = sourceText;
+                    
+                    // If streaming status is available in response
+                    if (data.streaming !== undefined) {
+                        if (data.streaming && !isStreaming) {
+                            showVideoFeed();
+                        } else if (!data.streaming && isStreaming) {
+                            hideVideoFeed();
+                        }
+                        isStreaming = data.streaming;
+                    }
+                })
+                .catch(error => console.error('Error fetching status:', error));
+        }
+
+        // Reset counter
+        document.getElementById('resetBtn').addEventListener('click', function() {
+            fetch('/reset_counter', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                }
+            })
+            .then(response => response.json())
+            .then(data => {
+                console.log('Counter reset:', data);
+                updateStatus();
+            })
+            .catch(error => console.error('Error resetting counter:', error));
+        });
+
+        // Start video
+        document.getElementById('switchToVideo').addEventListener('click', function() {
+            startStream('video');
+        });
+
+        // Start webcam
+        document.getElementById('switchToWebcam').addEventListener('click', function() {
+            startStream('webcam');
+        });
+
+        // Stop stream
+        document.getElementById('stopBtn').addEventListener('click', function() {
+            stopStream();
+        });
+
+        // Function to show video feed
+        function showVideoFeed() {
+            placeholder.style.display = 'none';
+            videoFeed.style.display = 'block';
+            stopBtn.style.display = 'inline-block';
+            loader.style.display = 'none';
+        }
+
+        // Function to hide video feed
+        function hideVideoFeed() {
+            videoFeed.style.display = 'none';
+            placeholder.style.display = 'block';
+            stopBtn.style.display = 'none';
+            loader.style.display = 'none';
+        }
+
+        // Function to start streaming
+        function startStream(source) {
+            // Show loader
+            loader.style.display = 'block';
+            
+            fetch('/start_stream', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ source: source })
+            })
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error('Network response was not ok: ' + response.statusText);
+                }
+                return response.json();
+            })
+            .then(data => {
+                console.log('Source started:', data);
+                
+                // Load video feed with timestamp to avoid caching
+                videoFeed.src = "{{ url_for('video_feed') }}?" + new Date().getTime();
+                
+                // Wait for the video to load
+                videoFeed.onload = function() {
+                    showVideoFeed();
+                };
+                
+                // In case of error or timeout, show the video feed anyway after 3 seconds
+                setTimeout(() => {
+                    if (loader.style.display === 'block') {
+                        showVideoFeed();
+                    }
+                }, 3000);
+                
+                updateStatus();
+            })
+            .catch(error => {
+                console.error('Error starting source:', error);
+                alert('Error starting video: ' + error.message);
+                loader.style.display = 'none';
+            });
+        }
+
+        // Function to stop streaming
+        function stopStream() {
+            // Show loader
+            loader.style.display = 'block';
+            
+            fetch('/stop_stream', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                }
+            })
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error('Network response was not ok: ' + response.statusText);
+                }
+                return response.json();
+            })
+            .then(data => {
+                console.log('Stream stopped:', data);
+                
+                // Reset video source
+                videoFeed.src = '';
+                
+                hideVideoFeed();
+                updateStatus();
+            })
+            .catch(error => {
+                console.error('Error stopping stream:', error);
+                alert('Error stopping video: ' + error.message);
+                loader.style.display = 'none';
+            });
+        }
+
+        // Update status every second
+        setInterval(updateStatus, 1000);
+
+        // Initial status update
+        updateStatus();
+        
+        // Handle image load error
+        videoFeed.onerror = function() {
+            console.error('Error loading video feed');
+            videoFeed.style.display = 'none';
+            placeholder.textContent = 'Error loading video. Please try again.';
+            placeholder.style.display = 'block';
+            loader.style.display = 'none';
+        };
+    </script>
+</body>
+</html>
+
